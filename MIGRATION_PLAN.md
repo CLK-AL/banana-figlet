@@ -44,6 +44,26 @@ integration into the `fonts-bitsnpicas`-hosted font studio.
 
 ---
 
+## 0.5 Roadmap stages (delivery checkpoints)
+
+| # | Stage | What lands | UI / CLI state |
+| --- | --- | --- | --- |
+| S0 | **Baseline** (✅ complete) | Review docs, `.sdkmanrc`, Maven + Gradle dual build, `gradle/libs.versions.toml` Maven-Central-verified. | — |
+| S1 | **Red-then-green Critical fixes** (✅ complete) | 5 Kotlin red-tests + 5 Java fixes (C1…C5). `mvn test` and `./gradlew test` both green (13 Java + 5 Kotlin = 18/18). | — |
+| S2 | **Phase B coverage drive** (**next**) | JaCoCo 100 % line + branch on `io.leego.banana.**` (the whole library — no Option-C exclusions needed here). Remaining Majors / Minors from `CODE_REVIEW.md` closed. | Text-output parity suite lands: Kotlin tests under `src/test/kotlin/io/leego/banana/parity/**` pin today's Java `bananaify` and `bananansi` output against every bundled `.flf` / `.tlf`. |
+| S3 | **Freeze** — tag `legacy-v1` | CODEOWNERS read-only on `src/main/java/**`; CI diff-check guard. | Parity hashes frozen. |
+| S4 | **Phase D** — port to `commonMain` | Per-subsystem Kotlin port (HeaderParse → GlyphParse → HorizSmush → VertSmush → TlfLoad → OptionImmutability). Same Kotlin tests run against both frozen Java and new Kotlin. Kover 100 % + Pitest ≥ 85 % per module. | Parity suite runs twice per PR (Java + Kotlin); any divergence fails CI. |
+| S5 | **Phase E** — Compose Desktop preview host | `ui-compose-desktop` hosts `FigletPreview` + live text field + font dropdown. `ComposeDesktopUiDriver` `actual` lands. | Green renderer joins the parity matrix. |
+| S6 | **Phase E.2** — Compose for Web (wasmJs) | `ui-compose-html` host reusing `FigletPreview`. `ComposeWebUiDriver` `actual` lands. | Three renderers (text / Desktop / Web); same suite; ARGB / text-output parity both gated. |
+| S7 | **Phase F** — Dual CI/CD release | `profile=java` → ProGuarded `banana-figlet-legacy` JAR. `profile=kmp` → klibs (JVM/JS/wasmJs/Native), Compose Desktop bundle, Web static site, GraalVM `native-image` CLI. `verifyProguardedJar` gates both. | — |
+
+See [`../fonts-bitsnpicas/docs/diagrams/08-ui-driver-expect-actual.puml`](../fonts-bitsnpicas/docs/diagrams/08-ui-driver-expect-actual.puml)
+for the UI-test driver architecture (host-wide; banana-figlet
+plugs into the same `UiDriver` expect/actual once vendored into
+`modules/figlet/`).
+
+---
+
 ## 1. Toolchain — SDKMAN + Gradle version catalog
 
 Every number below was verified against `sdk list` or Maven Central
@@ -134,12 +154,34 @@ proguard             = { id = "com.guardsquare.proguard",           version.ref 
 graalvm-native       = { id = "org.graalvm.buildtools.native",      version.ref = "graalvm" }
 ```
 
-### 1.3 JBang
+### 1.3 JBang — also the CLI runtime
 
-JBang (from `.sdkmanrc`) runs the single-file generators under
-`testdata/gen/*.kt` that build the malformed `.flf` / `.tlf` corpus
-(short header, non-numeric field, empty zip, …). One command, zero
-project setup: `jbang testdata/gen/BadFlf.kt`.
+JBang (from `.sdkmanrc`) has **two** roles:
+
+1. **Corpus generators** under `testdata/gen/*.kt` — build malformed
+   `.flf` / `.tlf` fixtures (short header, non-numeric field, empty
+   zip, …). `jbang testdata/gen/BadFlf.kt` — one command, zero
+   project setup.
+
+2. **CLI entry points** — `banana-figlet` ships a small CLI
+   (`bananaify "Hello"`). It migrates to a **JBang script written
+   in Kotlin using Clikt**, with `//DEPS` and `//SOURCES` (`//src`)
+   directives:
+
+   ```kotlin
+   ///usr/bin/env jbang "$0" "$@" ; exit $?
+   //KOTLIN 2.3.20
+   //DEPS com.github.ajalt.clikt:clikt:5.0.1
+   //DEPS io.leego:banana-figlet:<version>
+   //SOURCES cli/Bananaify.kt
+
+   fun main(args: Array<String>) = Bananaify().main(args)
+   ```
+
+   Users run `jbang banana.kt "Hello, World!"` with nothing on
+   disk but SDKMAN + the script. The same sources are aggregated
+   into the Gradle `modules/cli` module for ProGuarded fat JARs
+   and GraalVM `native-image` binaries in Stage S7.
 
 ---
 
@@ -183,10 +225,10 @@ banana-figlet/
 | --- | --- | --- | --- |
 | Unit | `commonTest` / `jvmTest` | `kotlin.test` | java, kmp |
 | Integration | `jvmTest` | JUnit 5 | java, kmp |
-| UI (Desktop) | `ui-compose-desktop:jvmTest` | Compose UI test | kmp |
-| UI (Web) | `ui-compose-html:wasmJsTest` | Compose Web test | kmp |
+| **Text-output parity** | `src/test/kotlin/.../parity` | `kotlin.test` driving `FigletIo` (Java actual, plus Kotlin actual from S4+) | java, kmp |
+| **UI (common, expect/actual)** | `modules/ui-shared/commonTest` (post-S5) | `kotlin.test` driving `UiDriver` (Compose Desktop + Web actuals) | kmp |
 | API / contract | `jvmTest`, `jsTest`, `nativeTest` | JUnit 5 / kotlin.test | kmp |
-| E2E | `:e2e` | JUnit 5 + Gradle `runCli` | java, kmp |
+| E2E | `:e2e` | JUnit 5 + Gradle `runCli` (JBang + Clikt CLI) | java, kmp |
 | Load / perf | `:benchmarks` | `kotlinx-benchmark` + JMH | java, kmp |
 | Fuzz | `jvmTest` | Jazzer | java, kmp |
 
@@ -194,6 +236,10 @@ Under `profile=java`, the Kotlin tests drive `JavaFigletIo` (an
 adapter over the frozen `BananaUtils`). Under `profile=kmp`, the
 same tests drive both `JavaFigletIo` *and* `KotlinFigletIo` via
 parameterisation — any divergence fails the build.
+
+UI parity is deferred to Stages S5 / S6 (post-vendor) and runs
+through the host's `UiDriver` expect/actual. See
+[`../fonts-bitsnpicas/docs/diagrams/08-ui-driver-expect-actual.puml`](../fonts-bitsnpicas/docs/diagrams/08-ui-driver-expect-actual.puml).
 
 ---
 
@@ -259,11 +305,35 @@ VertSmush, TlfLoad, OptionImmutability):
 
 ---
 
+## 4.6 Text + UI parity tier
+
+banana-figlet's `Glyph.vectorize` output is text (SVG as a
+string); `bananaify` output is also text. Parity is enforced at
+two levels:
+
+1. **Text-output parity** — Kotlin tests under
+   `src/test/kotlin/io/leego/banana/parity/**` (scaffolded at S2)
+   pin today's `BananaUtils.bananaify` / `bananansi` output
+   against every bundled font. From S4 onward the same tests run
+   against both the frozen Java and `commonMain` Kotlin via a
+   `FigletIo` expect/actual — byte-exact divergence fails CI.
+2. **UI parity** — once vendored into the host at S5, this
+   library's Kotlin implementation plugs into the host's
+   `UiDriver` (see
+   [`../fonts-bitsnpicas/docs/diagrams/08-ui-driver-expect-actual.puml`](../fonts-bitsnpicas/docs/diagrams/08-ui-driver-expect-actual.puml)).
+   ARGB-hash parity on the rendered FIGlet preview is then gated
+   against Swing (blue, via the host), Compose Desktop (green),
+   and Compose Web (green).
+
+---
+
 ## 5. 100 % coverage gates (both profiles)
 
-- **Profile `java`**: JaCoCo via Gradle `jacoco` plugin, against the
-  Java tree; `jacocoTestCoverageVerification` rule `minimum = 1.0`
-  on line + branch. Required to enter Phase C.
+- **Profile `java`**: JaCoCo via Gradle `jacoco` plugin against
+  the whole library (`io.leego.banana.**` — no Option-C
+  exclusions; the library is small enough to cover end-to-end).
+  `jacocoTestCoverageVerification` rule `minimum = 1.0` on line +
+  branch. Required to enter Stage S3 (freeze).
 - **Profile `kmp`**: Kover with `minBound = 100` on line + branch for
   every `commonMain` module; Pitest ≥ 85 % mutation.
 - No ignores on either profile.
