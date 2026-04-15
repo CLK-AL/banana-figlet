@@ -191,3 +191,30 @@ won't today, but the lack of isolation is a latent hazard.
 The single most valuable next step is adding negative-path tests for the
 five critical parsing bugs in `CODE_REVIEW.md`; the next-most-valuable is
 separating documentation generation from the test lifecycle.
+
+---
+
+## Execution plan (KMP / Gradle / TDD / 100 % coverage)
+
+The concrete execution is in [`MIGRATION_PLAN.md`](MIGRATION_PLAN.md).
+In short:
+
+- Each test level (unit, integration, UI, API, E2E, load, fuzz) is
+  wired to a dedicated Gradle KMP source set (§3 of the plan).
+- Every `CODE_REVIEW.md` finding becomes one named Kotlin test in
+  `commonTest` / `jvmTest`, authored **red** against a JVM delegate
+  over the legacy Java code (§4 of the plan).
+- Every assertion-bearing test currently in `BananaUtilsTests.java`
+  is ported to Kotlin against the delegate to pin current correct
+  behaviour.
+- The two doc-generating "tests" are relocated to a dedicated
+  Gradle `generateDocs` task and removed from `mvn test` / `gradle
+  test`.
+- `.tlf` support gets at least three pinned fonts in
+  `testdata/tlf/good/`.
+- 100 % Kotlin line + branch coverage (Kover) and ≥ 85 % mutation
+  coverage (Pitest) are enforced per subsystem before that subsystem
+  moves from `jvmMain` (Java delegate) to pure `commonMain`.
+- Legacy Java under `src/main/java/**` stays frozen; dual
+  `java-legacy` (Maven / JUnit 4) and `kmp` (Gradle / KMP matrix)
+  CI lanes both stay green on every PR.

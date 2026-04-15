@@ -223,3 +223,19 @@ is clearer than the current null-count approach.
 
 Addressing items 1 and 2 removes the library's main user-facing crash
 surface; item 3 removes a correctness foot-gun when fonts are reused.
+
+---
+
+## Remediation plan (KMP / Gradle / TDD)
+
+Every finding above is encoded as a failing Kotlin test and a
+`commonMain` Kotlin re-implementation in
+[`MIGRATION_PLAN.md`](MIGRATION_PLAN.md). The legacy Java code in
+`src/main/java/io/leego/banana/**` is **not** patched — it remains
+the reference renderer for the differential test suite and keeps
+shipping via the `java-legacy` release channel. Each finding has a
+named Kotlin test in §4 of the migration plan that first fails
+against the legacy Java delegate and then passes against the new
+Kotlin implementation, with 100 % Kover coverage and byte-exact
+differential parity against the legacy Java renderer as the merge
+gate.
