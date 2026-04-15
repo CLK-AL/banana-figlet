@@ -113,6 +113,27 @@ failure paths leak.
 **Fix:** Perform the initial entry read inside a try-with-resources and only
 hand the stream off once valid.
 
+### 8.5 Empty string / pure-newline input crashes `bananaify`  *(added during S2b coverage drive)*
+
+`BananaUtils.java` — `generateFiglet` / `smushVerticalFigletLines` path
+when the input produces zero figlet rows.
+
+`bananaify("")` and `bananaify("\n\n")` both throw
+`ArrayIndexOutOfBoundsException: Index 0 out of bounds for length 0`.
+Same bug class as finding 4 (`smushVerticalFigletLines` accessing
+`figlet1[0]` on an empty figlet array) but reachable through a
+different code path (empty input never produces any row).
+
+Discovered while writing `BananaUtilsExtraCoverageTest.bananaify pure
+newline-only input`; that test is currently disabled with an inline
+TODO pointing at this finding.
+
+**Fix:** Short-circuit the empty-input case at the top of
+`bananaify`: if `text.isEmpty()` or `text.trim().isEmpty()` would
+produce zero-line output, return `""` (or the bundled font's empty
+row padding) directly. Test must assert a deterministic return value,
+not a crash.
+
 ### 9. `getHorizontalSmushLength` silently masks invariant violations
 
 `BananaUtils.java:423`
@@ -195,6 +216,45 @@ explaining that the archive is empty.
 Hard-coded `0`, `3`, `6` into the rule string. Extract as named constants to
 make the layout of the rule explicit.
 
+### 17.5 `smushHorizontalRule5` has an unreachable `Y` branch  *(added during S2b coverage drive)*
+
+`BananaUtils.java:825-839` — the `pos1 == 3` branch.
+
+The rule string is `"/\\ \\/ ><"` which at runtime is 8 chars:
+
+```
+ 0 : /
+ 1 : \
+ 2 : space
+ 3 : \
+ 4 : /
+ 5 : space
+ 6 : >
+ 7 : <
+```
+
+The FIGlet spec defines Rule 5 as smushing `/\` → `|`, `\/` → `Y`,
+`><` → `X`. The implementation locates the pair via
+`rule.indexOf(s1)` + `rule.indexOf(s2)` — but `indexOf` always returns
+the **earliest** occurrence. `indexOf("\")` returns `1`, never `3`,
+so the `pos1 == 3` branch (the `\/ → Y` case) is **dead code**.
+`|` and `X` work; `Y` is unreachable.
+
+Discovered while writing `SmushRulesCoverageTest` (a targeted test
+for `\\` as first arg asserting `Y` output fails; a documenting
+test with the observed `EMPTY` behaviour + justification ships
+instead).
+
+**Fix:** Either replace `indexOf(s)` with explicit pair matching
+(`if (s1.equals("/") && s2.equals("\\")) return "|"; …`) to reach
+every documented spec branch; or delete the `pos1 == 3` dead code
+and document that `\\/` is not smushed. Spec-compatibility calls
+for the former; the pure-Kotlin port in Phase D should take that
+option.
+
+**Note:** This is low-severity (silent dead code, not a crash) —
+classified as Minor.
+
 ### 18. `Ansi.ansify` counts nulls instead of filtering
 
 `Ansi.java:118-119`
@@ -209,8 +269,8 @@ is clearer than the current null-count approach.
 | Severity | Count |
 | --- | --- |
 | Critical | 5 |
-| Major    | 5 |
-| Minor    | 5 |
+| Major    | 6  *(added: §8.5 empty-input AIOOBE)* |
+| Minor    | 6  *(added: §17.5 H5 dead Y branch)* |
 | Nit      | 3 |
 
 **Top priorities:**
