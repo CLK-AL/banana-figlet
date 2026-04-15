@@ -1,0 +1,7 @@
+# Stage S3 freeze (`legacy-v1`) — the legacy Java source tree is
+# read-only. CI enforces this via freeze-guard.yml.
+#
+# The Kotlin/KMP port happens in modules/figlet/ (post-vendoring
+# into the fonts-bitsnpicas host), not here.
+
+src/main/java/**                           @legacy-frozen

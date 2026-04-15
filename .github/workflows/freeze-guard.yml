@@ -1,0 +1,30 @@
+name: freeze-guard
+
+# Fails any PR whose diff against the default branch touches paths
+# frozen at tag `legacy-v1` (Stage S3).
+
+on:
+  pull_request:
+    branches: ["**"]
+
+jobs:
+  guard:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with: { fetch-depth: 0 }
+      - name: Check for edits inside the frozen tree
+        shell: bash
+        run: |
+          set -euo pipefail
+          BASE="${GITHUB_BASE_REF:-main}"
+          git fetch origin "$BASE" --depth=1
+          DIFF=$(git diff --name-only "origin/$BASE"...HEAD -- 'src/main/java/**' || true)
+          if [ -n "$DIFF" ]; then
+            echo "::error::This PR modifies files frozen at legacy-v1 (Stage S3)."
+            echo "::error::Modified paths:"
+            printf '%s\n' "$DIFF" | sed 's/^/  - /'
+            echo "::error::Patch modules/figlet/ in the fonts-bitsnpicas host instead."
+            exit 1
+          fi
+          echo "No edits inside the frozen tree. OK."
