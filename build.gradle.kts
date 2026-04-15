@@ -50,10 +50,47 @@ jacoco {
     toolVersion = "0.8.12"
 }
 
+// Coverage targets only the production library; test classes and
+// the genuinely-unreachable defensive branch in Font.convertIfZipped
+// (the `entry == null` path — see FontCoverageTest comment) are
+// excluded.
+val coverageClassFilter: org.gradle.api.file.FileCollection by lazy {
+    files(
+        sourceSets.main.get().output.classesDirs.map { dir ->
+            fileTree(dir).matching {
+                include("io/leego/banana/**")
+                // No exclusions — Font.convertIfZipped's `entry == null`
+                // branch is unreachable from the public API but JaCoCo
+                // accepts the 1-line gap; we don't tag-exclude here so
+                // any future change that makes it reachable is noticed.
+            }
+        }
+    )
+}
+
 tasks.jacocoTestReport {
     dependsOn(tasks.test)
+    classDirectories.setFrom(coverageClassFilter)
     reports {
         xml.required.set(true)
         html.required.set(true)
     }
 }
+
+tasks.register<JacocoCoverageVerification>("jacocoTestCoverageVerification90") {
+    dependsOn(tasks.test)
+    classDirectories.setFrom(coverageClassFilter)
+    executionData(tasks.test.get())
+    violationRules {
+        rule {
+            limit { counter = "LINE";   minimum = "0.95".toBigDecimal() }
+            limit { counter = "BRANCH"; minimum = "0.80".toBigDecimal() }
+        }
+    }
+}
+
+// Wire the verification into `check` once we are confident the
+// remaining BananaUtils smush-rule branches are covered. For S2
+// the gate is a soft guard — the goal is "no regressions below
+// the current baseline", not strict 100 %.
+tasks.named("check") { dependsOn("jacocoTestCoverageVerification90") }
