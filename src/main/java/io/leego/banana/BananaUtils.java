@@ -292,9 +292,22 @@ public final class BananaUtils {
             output[i] = EMPTY;
         }
         for (int index = 0; index < text.length(); index++) {
-            String[] figlet = figletMap.get((int) text.charAt(index));
+            char ch = text.charAt(index);
+            String[] figlet = figletMap.get((int) ch);
             if (figlet == null) {
                 continue;
+            }
+            if (figlet.length < height) {
+                throw new IllegalArgumentException(
+                        "Malformed font: glyph for character '" + ch + "' (code " + (int) ch
+                                + ") has " + figlet.length + " rows but font height is " + height + ".");
+            }
+            for (int i = 0; i < height; i++) {
+                if (figlet[i] == null) {
+                    throw new IllegalArgumentException(
+                            "Malformed font: glyph for character '" + ch + "' (code " + (int) ch
+                                    + ") is missing row " + i + " of " + height + ".");
+                }
             }
             int overlap = 0;
             if (option.getRule().getHorizontalLayout() != Layout.FULL) {
