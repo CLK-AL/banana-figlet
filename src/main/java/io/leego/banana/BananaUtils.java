@@ -574,6 +574,12 @@ public final class BananaUtils {
     }
 
     private static String[] smushVerticalFigletLines(String[] figlet1, String[] figlet2, Option option) {
+        if (figlet1.length == 0) {
+            return figlet2;
+        }
+        if (figlet2.length == 0) {
+            return figlet1;
+        }
         int len1 = figlet1[0].length();
         int len2 = figlet2[0].length();
         int overlap;
