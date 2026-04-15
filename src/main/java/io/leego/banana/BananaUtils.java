@@ -273,6 +273,12 @@ public final class BananaUtils {
                     charIndex--;
                 }
 
+                if (charIndex < 0) {
+                    throw new IllegalArgumentException(
+                            "Malformed font '" + font.getName() + "': glyph row " + j
+                                    + " for code " + code + " has no endmark (row is empty or only whitespace).");
+                }
+
                 char endChar = charRow.charAt(charIndex); // first endmark
                 while (charIndex >= 0 && charRow.charAt(charIndex) == endChar) { // remove all endmarks
                     charIndex--;
