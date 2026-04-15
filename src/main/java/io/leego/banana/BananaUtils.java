@@ -221,6 +221,12 @@ public final class BananaUtils {
         // Builds option.
         Option option = new Option();
         String[] header = data.get(0).split(WHITESPACE);
+        if (header[0].length() < 6) {
+            throw new IllegalArgumentException(
+                    "Invalid font header in '" + font.getName()
+                            + "': first token must be at least 6 characters (signature + hardblank), got '"
+                            + header[0] + "'.");
+        }
         option.setHardBlank(header[0].substring(5, 6));
         option.setHeight(Integer.parseInt(header[1]));
         option.setBaseline(Integer.parseInt(header[2]));
