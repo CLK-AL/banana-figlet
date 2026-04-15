@@ -81,16 +81,20 @@ tasks.register<JacocoCoverageVerification>("jacocoTestCoverageVerification90") {
     dependsOn(tasks.test)
     classDirectories.setFrom(coverageClassFilter)
     executionData(tasks.test.get())
+    // Tightened floor after the SmushRulesCoverageTest pass lifted
+    // coverage to 97.7 % line / 87.4 % branch. Remaining gap lives
+    // in BananaUtils' public-entry coordinator methods (bananaify,
+    // generateFiglet, canSmushVertical, smushVerticalLines,
+    // smushHorizontal, getSmushRule's 16-combo Layout dispatch) —
+    // documented as a S2c follow-up. The floor prevents regressions
+    // below what we actually shipped.
     violationRules {
         rule {
-            limit { counter = "LINE";   minimum = "0.95".toBigDecimal() }
-            limit { counter = "BRANCH"; minimum = "0.80".toBigDecimal() }
+            limit { counter = "LINE";   minimum = "0.97".toBigDecimal() }
+            limit { counter = "BRANCH"; minimum = "0.87".toBigDecimal() }
+            limit { counter = "METHOD"; minimum = "1.00".toBigDecimal() }
         }
     }
 }
 
-// Wire the verification into `check` once we are confident the
-// remaining BananaUtils smush-rule branches are covered. For S2
-// the gate is a soft guard — the goal is "no regressions below
-// the current baseline", not strict 100 %.
 tasks.named("check") { dependsOn("jacocoTestCoverageVerification90") }
