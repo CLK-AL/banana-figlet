@@ -605,7 +605,9 @@ public final class BananaUtils {
 
     private static int getVerticalSmushDist(String[] figlet1, String[] figlet2, Option option) {
         int curDist = 1;
-        int maxDist = figlet1.length;
+        // Cap the overlap at both figlets' heights so we never slice past
+        // the shorter one (see CODE_REVIEW.md C5).
+        int maxDist = Math.min(figlet1.length, figlet2.length);
         int len1 = figlet1.length;
         String[] subLines1;
         String[] subLines2;
@@ -613,7 +615,8 @@ public final class BananaUtils {
             subLines1 = slice(figlet1, Math.max(0, len1 - curDist), len1);
             subLines2 = slice(figlet2, 0, Math.min(maxDist, curDist));
             int result = VALID;
-            for (int i = 0; i < subLines2.length; i++) {
+            int iters = Math.min(subLines1.length, subLines2.length);
+            for (int i = 0; i < iters; i++) {
                 int ret = canSmushVertical(subLines1[i], subLines2[i], option);
                 if (END == ret) {
                     result = ret;
