@@ -1,298 +1,400 @@
 # Migration Plan: banana-figlet → Kotlin / KMP / Gradle
 
 Execution companion to [`CODE_REVIEW.md`](CODE_REVIEW.md) and
-[`TEST_REVIEW.md`](TEST_REVIEW.md). Converts every review finding into
-a **failing** Kotlin test (TDD), drives 100 % Kotlin test coverage on
-JVM, then migrates production code to **pure Kotlin Multiplatform
-`commonMain`**. Legacy Java sources remain untouched as a reference
-implementation. CI/CD runs in dual mode: `java-legacy` (Maven/JUnit 4)
-and `kmp` (Gradle/KMP).
+[`TEST_REVIEW.md`](TEST_REVIEW.md). Drives every review finding through
+a strict **fix-then-freeze-then-port** cycle:
+
+1. Author Kotlin TDD tests that fail against today's Java code.
+2. **Fix the Java code** until every test is green and JVM coverage
+   reaches 100 % line + branch.
+3. **Freeze** the now-stable Java sources and tag them `legacy-v1`.
+4. **Migrate** the frozen Java logic to pure Kotlin Multiplatform
+   (`commonMain`), reusing the *same* Kotlin test suite — which now
+   runs against both the frozen Java and the new Kotlin
+   implementations as a differential parity gate.
+
+Two CI/CD profiles (`java`, `kmp`) run on every PR throughout; both
+apply ProGuard to release artefacts. See
+[`INTEGRATION.md`](INTEGRATION.md) for the downstream
+integration into the `fonts-bitsnpicas`-hosted font studio.
 
 ---
 
 ## 0. Guiding principles
 
-1. **Legacy Java is frozen.** `src/main/java/io/leego/banana/**` is
-   read-only; no edits. It serves as the reference renderer for
-   differential tests and remains publishable on the legacy release
-   channel.
-2. **Strict TDD.** Every `CODE_REVIEW.md` finding is encoded as a
-   failing Kotlin test **before** any Kotlin implementation lands. The
-   legacy Java code is never patched.
-3. **Differential parity gate.** For every font in the catalogue and
-   every representative input, the new Kotlin renderer's output must
-   be byte-identical to the legacy Java renderer's output (minus the
-   exact bugs `CODE_REVIEW.md` is explicitly fixing — those get
-   divergence tests).
-4. **100 % Kotlin coverage before pure-KMP migration.** A format /
-   subsystem only moves from Java-delegate to `commonMain` once Kover
-   reports 100 % line + branch coverage.
-5. **Dual CI/CD.** Two pipelines on every PR:
-   - `java-legacy` — Maven, JDK 8, JUnit 4.13.1 suite.
-   - `kmp` — Gradle, JDK 21, KMP matrix (JVM / JS / Native / wasmJs).
+1. **TDD, strictly.** Every finding in `CODE_REVIEW.md` becomes a red
+   Kotlin test *before* any production code changes.
+2. **Java is stabilised first, then frozen.** The existing Java is
+   fixed to pass the Kotlin tests and reach 100 % coverage; every fix
+   commit references its `CODE_REVIEW.md` finding ID. Only after
+   stabilisation does the Java tree become read-only.
+3. **Shared test suite across Java and Kotlin.** Tests target a
+   platform-neutral `FigletIo` interface with two `actual`
+   implementations — a JVM adapter over the frozen Java, and pure
+   Kotlin in `commonMain`. The same `@Test` methods run against both.
+4. **100 % coverage at every transition.** JVM (JaCoCo) reaches 100 %
+   before freeze; Kotlin (Kover) must stay at 100 % before a
+   subsystem migrates from Java-delegate to pure `commonMain`.
+5. **Dual CI/CD profiles.** Gradle profiles `-Pprofile=java` and
+   `-Pprofile=kmp`. Every PR runs both. Both apply ProGuard on
+   release artefacts and verify the shrunk JAR.
+6. **Reproducible toolchain via SDKMAN.** Contributors and CI consume
+   the exact same JDK / Kotlin / Gradle / JBang versions declared in
+   `.sdkmanrc`, pinned to the **latest stable** at migration time.
 
 ---
 
-## 1. Repository layout after migration
+## 1. Toolchain — SDKMAN + Gradle version catalog
+
+Every number below was verified against `sdk list` or Maven Central
+at commit time. The whole table is driven by two files:
+`.sdkmanrc` (JDK / Kotlin / Gradle / JBang) and
+`gradle/libs.versions.toml` (everything else).
+
+| Concern | Choice (verified latest stable) |
+| --- | --- |
+| JDK           | Oracle GraalVM **25.0.2-graal** — both profiles |
+| Kotlin        | **2.3.20** — K2, multiplatform plugin |
+| Gradle        | **9.4.1** — Kotlin DSL + version catalog |
+| JBang         | **0.138.0** |
+| Test          | `kotlin.test` + JUnit **5.12.2** + Kotest **5.9.1** property |
+| Coverage      | Kover **0.9.1** (KMP), JaCoCo (Java), 100 % line + branch |
+| Mutation      | Pitest Gradle **1.15.0** / core **1.19.1**, ≥ 85 % |
+| Static        | Detekt **1.23.8**, ktlint-gradle **12.3.0** |
+| Fuzz          | Jazzer **0.24.0** |
+| Bench         | `kotlinx-benchmark` runtime **0.4.14** + JMH |
+| UI (Desktop)  | Compose Multiplatform **1.8.2** |
+| UI (Web)      | Compose for Web (wasmJs), Compose **1.8.2** |
+| Shrink        | ProGuard Gradle **7.7.0** + `verifyProguardedJar` |
+| Native        | `org.graalvm.buildtools.native` **0.10.6** |
+| CI            | GitHub Actions `{ubuntu,macos,windows}-latest` via `sdk env` |
+
+
+### 1.1 `.sdkmanrc` (repo root)
+
+```
+# .sdkmanrc  — run `sdk env` in the repo root
+# Pinned to the latest 2026 stable; bumped by a single renovate/dependabot PR.
+java=25.0.2-graal            # Oracle GraalVM for JDK 25 LTS (SDKMAN `graal` distro; native-image + PGO for KMP native targets)
+kotlin=2.3.20            # latest stable from `sdk list kotlin`
+gradle=9.4.1             # latest stable from `sdk list gradle`
+jbang=0.138.0            # latest stable from `sdk list jbang`
+```
+
+CI installs SDKMAN (`sdkman/sdkman-action@…`) and runs `sdk env` —
+no toolchain versions are duplicated in workflow YAML.
+
+### 1.2 `gradle/libs.versions.toml`
+
+Latest-stable versions at migration time; bumped via Renovate/Dependabot
+PRs.
+
+Latest 2026 stable at adoption time; Renovate/Dependabot keep the
+file fresh.
+
+```toml
+[versions]
+# All versions below verified against Maven Central on the day of
+# this commit. Renovate/Dependabot keep them fresh.
+kotlin         = "2.3.20"    # matches `.sdkmanrc`
+coroutines     = "1.10.2"
+serialization  = "1.9.0"
+kover          = "0.9.1"
+pitestGradle   = "1.15.0"
+pitestCore     = "1.19.1"
+kotest         = "5.9.1"     # 6.x is milestones
+jbang          = "0.138.0"   # matches `.sdkmanrc`
+junit          = "5.12.2"    # 5.13.x is milestones
+jazzer         = "0.24.0"
+detekt         = "1.23.8"
+ktlintGradle   = "12.3.0"
+ktlintCore     = "1.6.0"
+compose        = "1.8.2"     # 1.9.x is alpha
+skiko          = "0.9.18"
+benchmarks     = "0.4.14"
+proguard       = "7.7.0"
+graalvmPlugin  = "0.10.6"    # org.graalvm.buildtools.native plugin
+
+[libraries]
+kotlin-test         = { module = "org.jetbrains.kotlin:kotlin-test",         version.ref = "kotlin" }
+kotlinx-coroutines  = { module = "org.jetbrains.kotlinx:kotlinx-coroutines-core", version.ref = "coroutines" }
+kotest-property     = { module = "io.kotest:kotest-property",                version.ref = "kotest" }
+junit-jupiter       = { module = "org.junit.jupiter:junit-jupiter",          version.ref = "junit" }
+jazzer              = { module = "com.code-intelligence:jazzer-junit",       version.ref = "jazzer" }
+
+[plugins]
+kotlin-multiplatform = { id = "org.jetbrains.kotlin.multiplatform", version.ref = "kotlin" }
+kover                = { id = "org.jetbrains.kotlinx.kover",        version.ref = "kover" }
+pitest               = { id = "info.solidsoft.pitest",              version.ref = "pitest" }
+detekt               = { id = "io.gitlab.arturbosch.detekt",        version.ref = "detekt" }
+ktlint               = { id = "org.jlleitschuh.gradle.ktlint",      version.ref = "ktlint" }
+compose              = { id = "org.jetbrains.compose",              version.ref = "compose" }
+benchmarks           = { id = "org.jetbrains.kotlinx.benchmark",    version.ref = "benchmarks" }
+proguard             = { id = "com.guardsquare.proguard",           version.ref = "proguard" }
+graalvm-native       = { id = "org.graalvm.buildtools.native",      version.ref = "graalvm" }
+```
+
+### 1.3 JBang
+
+JBang (from `.sdkmanrc`) runs the single-file generators under
+`testdata/gen/*.kt` that build the malformed `.flf` / `.tlf` corpus
+(short header, non-numeric field, empty zip, …). One command, zero
+project setup: `jbang testdata/gen/BadFlf.kt`.
+
+---
+
+## 2. Repository layout after migration
 
 ```
 banana-figlet/
-├── src/main/java/io/leego/banana/**        ← legacy Java (frozen)
-├── src/test/java/io/leego/banana/**        ← legacy JUnit 4 suite
-├── pom.xml                                  ← legacy Maven build (kept)
-├── settings.gradle.kts                      ← new KMP root
-├── build.gradle.kts
+├── .sdkmanrc
+├── gradle/libs.versions.toml
+├── settings.gradle.kts
+├── build.gradle.kts                          ← registers profiles `java` + `kmp`
+├── pom.xml                                    ← retained Maven build (legacy-channel only)
+├── src/main/java/io/leego/banana/**          ← Java sources (stabilised in Phase B; frozen at Phase C)
+├── src/test/kotlin/io/leego/banana/**        ← NEW: Kotlin tests, run against Java via `profile=java`
 ├── kmp/
-│   ├── core/                                ← library
-│   │   ├── src/commonMain/kotlin/…          ← pure parser + renderer
-│   │   ├── src/commonTest/kotlin/…
-│   │   ├── src/jvmMain/kotlin/…             ← File I/O, ZipInputStream
-│   │   ├── src/jvmTest/kotlin/…             ← legacy-delegate tests
-│   │   ├── src/jsMain/kotlin/…              ← JS File API / fetch
-│   │   ├── src/wasmJsMain/kotlin/…
-│   │   └── src/nativeMain/kotlin/…
-│   ├── cli/                                 ← Kotlin CLI (replacement for Java examples)
-│   ├── ui-compose-desktop/                  ← Compose Desktop host
-│   ├── ui-compose-html/                     ← Compose for Web
-│   └── ui-shared/                           ← shared Compose UI
-├── testdata/                                ← .flf + .tlf corpus
-├── .github/workflows/
-│   ├── java-legacy.yml
-│   └── kmp.yml
+│   ├── core/
+│   │   ├── src/commonMain/kotlin/…            ← pure figlet renderer (Phase D+)
+│   │   ├── src/commonTest/kotlin/…            ← SAME Kotlin tests, reused verbatim
+│   │   ├── src/jvmMain/kotlin/…               ← File I/O, ZipInputStream
+│   │   ├── src/jvmTest/kotlin/…               ← JVM-only tests (fuzz, resource)
+│   │   ├── src/jsMain/, wasmJsMain/, nativeMain/
+│   ├── cli/
+│   ├── ui-compose-desktop/
+│   ├── ui-compose-html/
+│   └── ui-shared/
+├── proguard/
+│   ├── proguard-rules-common.pro
+│   ├── proguard-rules-java.pro
+│   └── proguard-rules-kmp.pro
+├── testdata/                                  ← .flf + .tlf corpus + JBang generators
+└── .github/workflows/
+    ├── java.yml                                ← profile=java
+    └── kmp.yml                                 ← profile=kmp
 ```
 
-Maven remains authoritative for the Java-legacy build; Gradle is
-authoritative for KMP.
-
 ---
 
-## 2. Toolchain
+## 3. Test strategy across every level
 
-| Concern | Choice |
-| --- | --- |
-| Build          | Gradle 8.x Kotlin DSL, version catalog `gradle/libs.versions.toml` |
-| Kotlin         | 2.x K2, multiplatform plugin with JVM / JS / wasmJs / Native |
-| Test framework | `kotlin.test` (common) + JUnit 5 Jupiter (JVM) + Kotest property-based |
-| Coverage       | Kover 0.8.x, `minBound = 100` on line + branch for `commonMain` |
-| Mutation       | Pitest (JVM), quality gate 85 % |
-| Property tests | Kotest `property` for smushing-rule fuzzing |
-| Fuzz           | Jazzer on the `.flf` and `.tlf` parsers, seeded from `testdata/` |
-| Static         | Detekt + ktlint |
-| UI (Desktop)   | Compose Multiplatform Desktop |
-| UI (Web)       | Compose for Web (wasmJs preferred, js fallback) |
-| Load / perf    | `kotlinx-benchmark` + JMH, regression gate ±10 % |
-| CI             | GitHub Actions matrix: `java-legacy` + `kmp` on ubuntu/macos/windows |
-
----
-
-## 3. Test strategy — every level
-
-| Level | Source set | Runner | Purpose |
+| Level | Source set | Runner | Profile(s) |
 | --- | --- | --- | --- |
-| Unit | `commonTest` / `jvmTest` | `kotlin.test` | Per-function parser + smushing rule logic |
-| Integration | `jvmTest` | JUnit 5 | `bananaify` end-to-end against every font in `testdata/` |
-| UI (Desktop) | `ui-compose-desktop:jvmTest` | Compose UI test | Renders a figlet in a Compose window, asserts DOM |
-| UI (Web) | `ui-compose-html:wasmJsTest` | Compose Web test | Renders figlet in browser, asserts node tree |
-| API (contract) | `jvmTest` / `jsTest` | JUnit 5 | Public `BananaUtils` surface stability |
-| E2E | `:e2e` | JUnit 5 | KMP CLI runs side-by-side with Java CLI, diff outputs |
-| Load / perf | `:benchmarks` | `kotlinx-benchmark` | Throughput: N chars × M fonts; regression gate |
-| Fuzz | `jvmTest` | Jazzer | Random `.flf` / `.tlf` headers and bodies |
+| Unit | `commonTest` / `jvmTest` | `kotlin.test` | java, kmp |
+| Integration | `jvmTest` | JUnit 5 | java, kmp |
+| UI (Desktop) | `ui-compose-desktop:jvmTest` | Compose UI test | kmp |
+| UI (Web) | `ui-compose-html:wasmJsTest` | Compose Web test | kmp |
+| API / contract | `jvmTest`, `jsTest`, `nativeTest` | JUnit 5 / kotlin.test | kmp |
+| E2E | `:e2e` | JUnit 5 + Gradle `runCli` | java, kmp |
+| Load / perf | `:benchmarks` | `kotlinx-benchmark` + JMH | java, kmp |
+| Fuzz | `jvmTest` | Jazzer | java, kmp |
+
+Under `profile=java`, the Kotlin tests drive `JavaFigletIo` (an
+adapter over the frozen `BananaUtils`). Under `profile=kmp`, the
+same tests drive both `JavaFigletIo` *and* `KotlinFigletIo` via
+parameterisation — any divergence fails the build.
 
 ---
 
-## 4. TDD test plan — one failing Kotlin test per `CODE_REVIEW.md` finding
+## 4. TDD test plan — failing tests first, fix Java, then port
 
-Each test is first authored red against a JVM delegate that calls the
-legacy Java code; it will fail because the bug still exists. After the
-Kotlin re-implementation lands, the test goes green.
-
-### 4.1 Critical (must fail red first)
+### 4.1 One failing Kotlin test per `CODE_REVIEW.md` finding
 
 | Finding | Failing Kotlin test |
 | --- | --- |
-| 1. `header[0].substring(5, 6)` OOB | `FlfHeaderParserTest.`​`header_shorter_than_6_chars_throws_InvalidFontException_not_SIOOBE()` |
-| 2. `figlet[i]` NPE for truncated glyphs | `FigletRenderTest.`​`truncated_glyph_file_reports_parse_error_not_NPE()` |
-| 3. Endmark-only row crashes | `GlyphParserTest.`​`row_of_only_endmarks_parses_as_empty_string()` |
-| 4. `smushVerticalFigletLines` empty | `VerticalSmushTest.`​`empty_figlet_input_returns_empty_not_AIOOBE()` |
-| 5. `getVerticalSmushDist` OOB | `VerticalSmushTest.`​`curDist_greater_than_len1_returns_valid_distance()` |
+| C1. `substring(5, 6)` OOB | `FlfHeaderParserTest.header_shorter_than_6_chars_throws_InvalidFontException_not_SIOOBE()` |
+| C2. `figlet[i]` NPE truncation | `FigletRenderTest.truncated_glyph_file_reports_parse_error_not_NPE()` |
+| C3. Endmark-only row crash | `GlyphParserTest.row_of_only_endmarks_parses_as_empty_string()` |
+| C4. `smushVerticalFigletLines` empty | `VerticalSmushTest.empty_figlet_input_returns_empty_not_AIOOBE()` |
+| C5. `getVerticalSmushDist` OOB | `VerticalSmushTest.curDist_greater_than_len1_returns_valid_distance()` |
+| M6. Unwrapped `NumberFormatException` | `FlfHeaderParserTest.non_numeric_header_field_throws_InvalidFontException()` |
+| M7. `header.length` unchecked | `FlfHeaderParserTest.short_header_token_list_throws_InvalidFontException()` |
+| M8. `ZipInputStream` leak | `TlfLoaderResourceTest.loading_many_tlf_does_not_leak_fds()` *(jvmTest)* |
+| M9. `getHorizontalSmushLength` silent mask | `HorizontalSmushTest.substr_len1_minus_curDist_is_valid_when_curDist_le_len1()` |
+| M10. Mutable cached `Option` | `OptionImmutabilityTest.mutating_user_option_does_not_affect_cached_meta()` |
+| m11. `padLines` allocation | `PaddingTest.padLines_allocates_once_per_line()` (JMH allocation counter) |
+| m13. Mixed-layout precedence | `RuleParseTest.mixed_layout_rule_precedence_matches_figlet_spec()` |
+| All assertion-bearing tests currently in `BananaUtilsTests.java` | Ported to Kotlin verbatim as pinning tests; the two doc-generating "tests" are relocated to a `generateDocs` Gradle task. |
 
-### 4.2 Major
+### 4.2 Strict authoring order
 
-| Finding | Failing test |
-| --- | --- |
-| 6. Unwrapped `NumberFormatException` | `FlfHeaderParserTest.non_numeric_header_field_throws_InvalidFontException()` |
-| 7. Unchecked `header.length` | `FlfHeaderParserTest.short_header_token_list_throws_InvalidFontException()` |
-| 8. Leaked `ZipInputStream` | `TlfLoaderResourceTest.`​`loading_many_tlf_does_not_leak_fds()` (JVM-only) |
-| 9. `getHorizontalSmushLength` silent `substr` mask | `HorizontalSmushTest.`​`substr_len1_minus_curDist_is_valid_when_curDist_le_len1()` |
-| 10. Mutable cached `Option` | `OptionImmutabilityTest.`​`mutating_user_option_does_not_affect_cached_meta()` |
+For each subsystem `S` (HeaderParse, GlyphParse, HorizSmush,
+VertSmush, TlfLoad, OptionImmutability):
 
-### 4.3 Minor + Nit
+1. **Red (Phase A).** Commit Kotlin tests for `S` against `FigletIo`
+   with only `JavaFigletIo` wired. CI shows red under
+   `-Pprofile=java`.
+2. **Fix Java to green (Phase B).** Edit `src/main/java/io/leego/banana/**`
+   until every test passes. Commit subjects cite the finding ID
+   (`fix: C1 validate FLF header length`). Raise JaCoCo coverage
+   toward 100 %.
+3. **Freeze (Phase C).** Tag `legacy-v1`, apply CODEOWNERS read-only
+   protection on `src/main/java/io/leego/banana/**`, CI check fails
+   any PR touching the frozen tree.
+4. **Port (Phase D).** Author `commonMain` Kotlin for `S`; wire
+   `KotlinFigletIo`. The *same* Kotlin test class runs twice under
+   `-Pprofile=kmp` — once against frozen Java, once against Kotlin.
+5. **Differential parity gate.** `testdata/` × every `Font` × canned
+   inputs rendered by both implementations must be byte-exact
+   (minus the specific fixed-bug divergences).
+6. Retire the `JavaFigletIo` delegate; frozen Java under `src/main/java/**`
+   remains untouched.
 
-- `PaddingTest.padLines_allocates_once_per_line()` — verified via
-  JMH allocation counter.
-- `GenerateFigletLineTest.integer_max_value_sentinel_replaced_by_optional()`
-  — API surface check.
-- `RuleParseTest.mixed_layout_rule_precedence_matches_figlet_spec()`
-  — pins current behaviour.
-
-### 4.4 Test sequencing
-
-For each subsystem `S` (HeaderParse, GlyphParse, HorizSmush, VertSmush,
-TlfLoad):
-
-1. **JVM delegate** in `jvmMain`: `class ${S}JavaAdapter` wraps the
-   legacy `BananaUtils.*` method.
-2. **Red tests** from §4.1–4.3 written against the adapter. CI must
-   show them red on the adapter-only commit.
-3. **Pinning positive tests** against the adapter for current correct
-   behaviour (port every non-doc test from `BananaUtilsTests.java`).
-4. **`commonMain` implementation** of `S` in Kotlin. Both suites must
-   pass.
-5. **Differential suite**: `testdata/` × every `Font` × `Hello, World!`
-   rendered by both Java and Kotlin. Output must be byte-equal
-   (except for the known divergences introduced by the fix).
-6. Remove the JVM delegate for `S`. Kotlin `commonMain` is now
-   authoritative.
-
-### 4.5 Test corpus
+### 4.3 Test corpus
 
 - `testdata/flf/good/*.flf` — every font currently shipped in the
-  classpath `/flf/` directory, plus `standard.flf` pinned explicitly.
+  classpath `/flf/` directory, plus `standard.flf` pinned.
 - `testdata/flf/bad/*.flf` — 5-char header, non-numeric numeric
   field, truncated glyph, empty glyph row, endmark-only row.
-- `testdata/tlf/good/*.tlf` — at least 3 Toilet fonts to pin the
-  uncovered `.tlf` path flagged in `TEST_REVIEW.md`.
+- `testdata/tlf/good/*.tlf` — at least 3 Toilet fonts
+  (uncovered today per `TEST_REVIEW.md`).
 - `testdata/tlf/bad/*.tlf` — empty zip, zip with no entries,
   oversized entry.
-- `testdata/texts/*.txt` — `Hello, World!`, the multi-line sample
-  from `BananaUtilsTests`, a 2 KiB stress sample, a unicode-only
-  sample, empty string, whitespace-only, newline-only.
-- `testdata/gen/` — Kotlin scripts that generate the bad fonts
-  deterministically.
+- `testdata/texts/*.txt` — "Hello, World!", multi-line sample,
+  2 KiB stress sample, unicode-only, empty, whitespace-only,
+  newline-only.
+- `testdata/gen/*.kt` — JBang-runnable scripts that generate bad
+  fonts deterministically.
 
 ---
 
-## 5. 100 % Kotlin coverage gate
+## 5. 100 % coverage gates (both profiles)
 
-- `koverVerify { rule { bound { minValue = 100; metric = LINE };
-   bound { minValue = 100; metric = BRANCH } } }` on `commonMain`.
-- Pitest mutation ≥ 85 % on `commonMain` + `jvmMain`.
-- **No coverage exceptions**; if code cannot be covered in common
-  source it must move to platform-specific source sets with their
-  own 100 % gate.
-- A subsystem only migrates to pure `commonMain` (and its JVM
-  delegate deleted) when the gate is satisfied on that subsystem.
+- **Profile `java`**: JaCoCo via Gradle `jacoco` plugin, against the
+  Java tree; `jacocoTestCoverageVerification` rule `minimum = 1.0`
+  on line + branch. Required to enter Phase C.
+- **Profile `kmp`**: Kover with `minBound = 100` on line + branch for
+  every `commonMain` module; Pitest ≥ 85 % mutation.
+- No ignores on either profile.
 
 ---
 
 ## 6. Migration phases
 
-### Phase A — Gradle + CI scaffolding (1 PR)
+### Phase A — Toolchain + red tests
 
-- Add Gradle KMP root alongside existing `pom.xml`; both builds
-  coexist.
-- Commit `.github/workflows/java-legacy.yml` (Maven) and
-  `kmp.yml` (Gradle).
-- Gate: both lanes green on an empty Kotlin module.
+- Commit `.sdkmanrc`, `gradle/libs.versions.toml`, `settings.gradle.kts`,
+  `build.gradle.kts` with profiles `-Pprofile=java` / `-Pprofile=kmp`.
+- Commit `.github/workflows/java.yml` and `kmp.yml` (SDKMAN + Gradle).
+- Introduce `FigletIo` + `JavaFigletIo`.
+- Commit Kotlin TDD tests from §4.1 — **they fail on CI**.
+- Gate: `profile=java` red on purpose; `profile=kmp` green on empty module.
 
-### Phase B — Legacy-delegate + corpus (1 PR)
+### Phase B — Fix Java to green + 100 % JaCoCo
 
-- `jvmMain` adapters that delegate every `BananaUtils` entry point
-  to the legacy Java class.
-- Commit `testdata/` corpus (good + bad).
-- Port every **assertion-bearing** test from `BananaUtilsTests.java`
-  to Kotlin, running against the Java delegate.
-- **Do not port** the doc-generating tests
-  (`testGenerateFontDocs`, `testGenerateLayoutDocs`) — relocate them
-  to a Gradle `generateDocs` task.
-- Gate: all positive Kotlin tests green against Java delegate.
+- Fix `src/main/java/io/leego/banana/**` one finding at a time; each
+  commit references the finding ID.
+- Port every assertion-bearing test from `BananaUtilsTests.java` to
+  Kotlin as pinning tests against `JavaFigletIo`.
+- Relocate `testGenerateFontDocs` and `testGenerateLayoutDocs` to a
+  `generateDocs` Gradle task.
+- Expand corpus until JaCoCo reaches 100 %.
+- Gate: `profile=java` green, JaCoCo 100 %, all findings closed.
 
-### Phase C — TDD-fix subsystems one at a time
+### Phase C — Freeze Java
 
-Priority order: **HeaderParse → GlyphParse → HorizSmush → VertSmush →
+- Tag `legacy-v1` on the last Phase-B commit.
+- CODEOWNERS + branch-protection + CI diff-check guard the frozen
+  tree. Maven (`pom.xml`) and legacy publish path remain intact for
+  the `java` profile's release channel.
+
+### Phase D — Port to `commonMain`
+
+Priority: **HeaderParse → GlyphParse → HorizSmush → VertSmush →
 TlfLoad → OptionImmutability**.
 
-Each subsystem is one PR that:
+Per subsystem, one PR that:
 
-1. Adds the **red** negative tests (they fail against the Java
-   delegate).
-2. Adds the pure-Kotlin `commonMain` implementation.
-3. Wires the negative tests through the Kotlin implementation
-   (now green).
-4. Runs the differential suite against the corpus — must be
-   byte-exact except for the specific divergence the fix
-   introduces.
-5. Raises Kover to 100 % on that subsystem.
-6. Deletes the Java delegate for that subsystem.
+1. Adds the `commonMain` Kotlin implementation.
+2. Wires `KotlinFigletIo`.
+3. The existing test suite runs twice (Java + Kotlin).
+4. Differential parity byte-exact on the corpus.
+5. Kover 100 % + Pitest ≥ 85 % on the new module.
+6. Retires the Java delegate from `jvmMain`; frozen Java remains.
 
-### Phase D — UI migration
+### Phase E — UI + E2E + load/perf
 
-- `ui-compose-desktop/` — Compose Desktop app exposing
-  `BananaUtils.bananaify` and `bananansi` with a live text field
-  and font dropdown.
+- `ui-compose-desktop/` — Compose host exposing `BananaUtils.bananaify`
+  + `bananansi` with a live text field, font dropdown, layout picker.
 - `ui-shared/` — `FigletPreview` composable.
-- `ui-compose-html/` — Compose for Web wasmJs target hosting
-  `FigletPreview`.
-- UI tests:
-  - Desktop: Compose UI test asserts the rendered string after
-    font-change.
-  - Web: Compose Web renderer tests assert `<pre>` text content;
-    Playwright Kotlin E2E test drives the published static site.
+- `ui-compose-html/` — wasmJs host reusing `FigletPreview`.
+- UI tests: Compose UI test (desktop) + Compose Web test renderer
+  (web) + Playwright Kotlin E2E over the deployed static site.
+- `e2e` — runs legacy Java CLI and KMP CLI side-by-side over
+  `testdata/`; diff must be empty.
+- `benchmarks/` — JMH baselines for both implementations; ±10 %
+  regression gate.
 
-### Phase E — E2E + load/perf
+### Phase F — Dual CI/CD + release (with ProGuard)
 
-- `e2e-tests` module: a Gradle task builds the legacy Java CLI (from
-  the legacy Maven build) and the new KMP CLI, runs both over
-  `testdata/`, and diffs the output. Any divergence fails the build.
-- `benchmarks/` JMH gates: throughput of `bananaify` across
-  `Font.values()` for 1 KiB input, regression threshold ±10 %,
-  baseline committed.
+- **`profile=java`** workflow: `sdk env`, then
+  `./gradlew -Pprofile=java check jacocoTestCoverageVerification
+  proguardRelease verifyProguardedJar`. Publishes a ProGuard-shrunk
+  `banana-figlet-legacy-*` JAR.
+- **`profile=kmp`** workflow: `sdk env`, then
+  `./gradlew -Pprofile=kmp build koverVerify pitest proguardRelease
+  verifyProguardedJar packageReleaseDistribution`. Publishes:
+  - `banana-figlet-core-jvm` ProGuarded JAR (Maven Central)
+  - `banana-figlet-core-js`, `…-wasmjs`, `…-native-*` klibs (unshrunk)
+  - `banana-figlet-desktop` Compose bundle (built with Compose's
+    ProGuard integration)
+  - `banana-figlet-web` static site (Kotlin/JS production webpack)
+- **ProGuard rules** in `proguard/`:
+  - `proguard-rules-common.pro` — `kotlinx-serialization`,
+    `kotlin.reflect`, service-loader keep rules.
+  - `proguard-rules-java.pro` — reflective enum lookups in `Font`
+    (still used post-Phase-B fix), `bananaify` public API surface.
+  - `proguard-rules-kmp.pro` — Compose + coroutines keep rules,
+    `@JvmStatic` entry points.
+- **`verifyProguardedJar`** runs the full JUnit 5 suite against the
+  shrunk JAR on a separate classpath — catches missing keep rules
+  before release.
+- `mapping.txt` uploaded as a CI artefact and attached to the GitHub
+  release for stack-trace deobfuscation.
 
-### Phase F — Dual CI/CD + release
-
-- **`java-legacy` workflow** — `mvn -B verify`, publishes the classic
-  JAR under `io.leego:banana-figlet-legacy` to Maven Central.
-- **`kmp` workflow** — `./gradlew build kmpPublish`, publishes:
-  - `banana-figlet-core-jvm` (Maven Central)
-  - `banana-figlet-core-js` (npm)
-  - `banana-figlet-core-wasmjs` (npm)
-  - `banana-figlet-native-*` klibs (Maven Central)
-  - `banana-figlet-desktop` signed bundle (Compose Desktop)
-  - `banana-figlet-web` static site (GitHub Pages)
-- Tag-driven release pipeline runs both lanes; legacy channel has
-  a `-legacy` version suffix.
+Both workflows run on every PR and every tag.
 
 ---
 
 ## 7. Acceptance criteria
 
-1. Every `CODE_REVIEW.md` finding has a **named** Kotlin test whose
-   first commit shows it red on the Java delegate and whose matching
-   fix commit shows it green on Kotlin.
-2. `./gradlew koverVerify` = 100 % line + branch on `commonMain`
-   and every non-UI module.
-3. `./gradlew pitestReport` ≥ 85 %.
-4. Differential suite byte-exact parity with legacy Java for the
-   committed corpus (minus documented intentional divergences).
-5. `.tlf` support is covered by at least 3 pinned fonts in
-   `testdata/tlf/good/`.
-6. `java-legacy` lane still green on every PR; **no file under
-   `src/main/java/**` modified since Phase A**.
-7. `kmp` lane green on {ubuntu, macos, windows} × {jvm, js, wasmJs,
-   native}.
+1. Every `CODE_REVIEW.md` finding has a named Kotlin test whose Git
+   history shows **red → green** across Phase A→B, and **still green**
+   at Phase D running against both frozen Java and `commonMain`
+   Kotlin.
+2. Phase B closes with JaCoCo 100 % line + branch.
+3. Phase C tags `legacy-v1`; no post-tag commit touches
+   `src/main/java/**` (CI-enforced).
+4. Phase D closes with Kover 100 % + Pitest ≥ 85 %.
+5. Differential parity byte-exact for the committed corpus.
+6. `.tlf` support covered by at least 3 pinned fonts.
+7. `profile=java` and `profile=kmp` green on every PR across
+   {ubuntu, macos, windows}; `kmp` also green across {jvm, js,
+   wasmJs, native}.
+8. ProGuard-shrunk JAR passes the full test suite in
+   `verifyProguardedJar` on every release.
+9. `.sdkmanrc` + `libs.versions.toml` track the latest stable
+   toolchain.
 
 ---
 
 ## 8. Deliverables
 
-- Gradle KMP root + version catalog + `libs.versions.toml`.
-- `kmp/core/` with `commonMain` / `commonTest` / JVM / JS / wasmJs /
-  Native source sets.
-- `kmp/ui-compose-desktop/`, `kmp/ui-compose-html/`, `kmp/ui-shared/`
-  Compose modules.
-- `kmp/cli/` Kotlin CLI replacement.
-- `testdata/` corpus + generator scripts.
-- `.github/workflows/java-legacy.yml` and `kmp.yml`.
-- `TEST_PLAN.md` mapping each `CODE_REVIEW.md` finding → Kotlin test
-  FQN (auto-generated).
+- `.sdkmanrc`, `gradle/libs.versions.toml`, `build.gradle.kts`
+  with both profiles.
+- `FigletIo` fixture interface + `JavaFigletIo` + `KotlinFigletIo`.
+- Shared Kotlin test suite under `src/test/kotlin/**` and
+  `kmp/core/src/commonTest/**`.
+- `kmp/core/` with JVM / JS / wasmJs / Native source sets.
+- `kmp/ui-compose-desktop/`, `kmp/ui-compose-html/`, `kmp/ui-shared/`,
+  `kmp/cli/`.
+- `proguard/*.pro` rule files.
+- `testdata/` corpus + JBang generators.
+- `.github/workflows/{java,kmp}.yml` both sourcing `.sdkmanrc` and
+  running ProGuard + post-shrink verification.
+- `TEST_PLAN.md` auto-generated mapping `CODE_REVIEW.md` finding
+  → Kotlin test FQN.
 - `benchmarks/baselines/*.json`.
+- [`INTEGRATION.md`](INTEGRATION.md) — how this repo is consumed
+  as a vendored module in the `fonts-bitsnpicas`-hosted font studio.
