@@ -89,6 +89,12 @@ public final class BananaUtils {
      * @return the FIGlet of the text.
      */
     public static String bananaify(String text, Font font, Layout horizontalLayout, Layout verticalLayout) {
+        // §8.5 Empty / newline-only input produced an AIOOBE through
+        // generateFiglet → smushVerticalFigletLines accessing [0] on an
+        // empty figlet-row array. Short-circuit at the entry point.
+        if (text == null || text.isEmpty()) {
+            return EMPTY;
+        }
         String[] lines = generateFiglet(text, font, horizontalLayout, verticalLayout);
         if (lines == null || lines.length == 0) {
             return EMPTY;
@@ -178,6 +184,12 @@ public final class BananaUtils {
         }
         Option option = setLayout(meta.getOption(), horizontalLayout, verticalLayout);
         String[] lines = text.split("\\r?\\n");
+        // §8.5 Java's split discards trailing empty strings, so input like
+        // "\n\n" produces a zero-length array. Short-circuit to avoid
+        // figletLines[0] AIOOBE below.
+        if (lines.length == 0) {
+            return new String[0];
+        }
         String[][] figletLines = new String[lines.length][];
         for (int i = 0; i < lines.length; i++) {
             figletLines[i] = generateFigletLine(lines[i], meta.getFigletMap(), option);
