@@ -23,9 +23,9 @@ nbdist/
 .nb-gradle/
 
 ### Gradle ###
-/build/
+build/
 .gradle/
-/bin/
+bin/
 
 ### custom ###
 logs
