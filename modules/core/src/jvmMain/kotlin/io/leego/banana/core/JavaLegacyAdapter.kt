@@ -1,6 +1,9 @@
 package io.leego.banana.core
 
+import io.leego.banana.BananaUtils as JavaBananaUtils
+import io.leego.banana.Font as JavaFont
 import io.leego.banana.Layout as JavaLayout
+import io.leego.banana.Meta as JavaMeta
 import io.leego.banana.Option as JavaOption
 import io.leego.banana.Rule as JavaRule
 
@@ -81,5 +84,37 @@ public object JavaLegacyAdapter {
             oldLayout = javaOption.oldLayout,
             printDirection = javaOption.printDirection,
         )
+    }
+
+    /**
+     * Convert a frozen-Java `Meta` into an immutable commonMain `Meta`.
+     * Converts the embedded `Option` and the `figletMap` from
+     * `Map<Integer, String[]>` to `Map<Int, List<String>>`.
+     */
+    public fun metaFromJava(javaMeta: JavaMeta): Meta {
+        val option = optionFromJava(javaMeta.option)!!
+        val figletMap: Map<Int, List<String>> = javaMeta.figletMap.entries.associate { (k, v) ->
+            k.toInt() to v.toList()
+        }
+        return Meta(
+            option = option,
+            figletMap = figletMap,
+            comment = javaMeta.comment,
+            height = option.height ?: 0,
+        )
+    }
+
+    /**
+     * Call the frozen Java `BananaUtils.buildMeta(Font)` private method
+     * via reflection and convert the result into a commonMain [Meta].
+     *
+     * This is used by `FlfParserJvmParityTest` to drive the same font
+     * through both the Java and Kotlin parsers and assert parity.
+     */
+    public fun buildMetaViaJava(font: JavaFont): Meta {
+        val method = JavaBananaUtils::class.java.getDeclaredMethod("buildMeta", JavaFont::class.java)
+        method.isAccessible = true
+        val javaMeta = method.invoke(null, font) as JavaMeta
+        return metaFromJava(javaMeta)
     }
 }
