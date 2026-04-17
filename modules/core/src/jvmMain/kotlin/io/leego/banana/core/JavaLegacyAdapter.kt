@@ -117,4 +117,31 @@ public object JavaLegacyAdapter {
         val javaMeta = method.invoke(null, font) as JavaMeta
         return metaFromJava(javaMeta)
     }
+
+    /**
+     * Call the frozen Java `BananaUtils.generateFigletLine` private method
+     * via reflection and return its output as a commonMain `List<String>`.
+     *
+     * Used by `FigletRendererJvmParityTest` to drive identical inputs
+     * through both renderers and assert byte-exact agreement (modulo the
+     * documented §17.5 `\\/ → Y` divergence).
+     *
+     * @param text the text to render
+     * @param javaMeta the frozen-Java [io.leego.banana.Meta] whose
+     *   `figletMap` and `option` will be passed into the private method
+     */
+    public fun generateLineViaJava(text: String, javaMeta: JavaMeta): List<String> {
+        @Suppress("PLATFORM_CLASS_MAPPED_TO_KOTLIN")
+        val mapClass: Class<*> = java.util.Map::class.java
+        val method = JavaBananaUtils::class.java.getDeclaredMethod(
+            "generateFigletLine",
+            String::class.java,
+            mapClass,
+            JavaOption::class.java,
+        )
+        method.isAccessible = true
+        @Suppress("UNCHECKED_CAST")
+        val result = method.invoke(null, text, javaMeta.figletMap, javaMeta.option) as Array<String>
+        return result.toList()
+    }
 }
