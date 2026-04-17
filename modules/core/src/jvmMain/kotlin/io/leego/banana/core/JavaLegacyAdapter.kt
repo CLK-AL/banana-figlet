@@ -144,4 +144,36 @@ public object JavaLegacyAdapter {
         val result = method.invoke(null, text, javaMeta.figletMap, javaMeta.option) as Array<String>
         return result.toList()
     }
+
+    /**
+     * Call the frozen Java `BananaUtils.smushVerticalFigletLines` private
+     * method via reflection for each consecutive pair of line arrays in
+     * [figletLines], mirroring the accumulator loop in
+     * `generateFiglet`.  Returns the combined result as a commonMain
+     * `List<String>`.
+     *
+     * Used by [VerticalSmushJvmParityTest] to drive identical inputs
+     * through both the frozen Java and commonMain vertical-smush
+     * pipelines and assert byte-exact agreement.
+     */
+    public fun combineVerticallyViaJava(
+        figletLines: List<List<String>>,
+        javaOption: JavaOption,
+    ): List<String> {
+        if (figletLines.isEmpty()) return emptyList()
+        val method = JavaBananaUtils::class.java.getDeclaredMethod(
+            "smushVerticalFigletLines",
+            Array<String>::class.java,
+            Array<String>::class.java,
+            JavaOption::class.java,
+        )
+        method.isAccessible = true
+        var output: Array<String> = figletLines[0].toTypedArray()
+        for (i in 1 until figletLines.size) {
+            val next = figletLines[i].toTypedArray()
+            @Suppress("UNCHECKED_CAST")
+            output = method.invoke(null, output, next, javaOption) as Array<String>
+        }
+        return output.toList()
+    }
 }

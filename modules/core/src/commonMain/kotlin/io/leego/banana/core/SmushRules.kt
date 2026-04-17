@@ -119,4 +119,75 @@ public object SmushRules {
             else -> s2
         }
     }
+
+    // ---------------------------------------------------------------
+    // Vertical smushing rules (byte-exact port of
+    // BananaUtils.smushVerticalRule1..5).
+    //
+    // Unlike rule 5 on the horizontal side, the vertical rules do NOT
+    // have the §17.5 indexOf/dead-code issue. Rule 3 reuses the same
+    // hierarchy string as the horizontal rule 3 and has the same
+    // behavior; rules 1/2/4/5 are trivial character-pair tests.
+    // ---------------------------------------------------------------
+
+    /**
+     * Vertical rule 1: EQUAL CHARACTER SMUSHING (code value 256).
+     * Two sub-characters are smushed into a single sub-character if
+     * they are the same.  Unlike the horizontal rule 1, this rule
+     * does NOT special-case hardblanks — vertical smushing never sees
+     * hardblanks (they are replaced with spaces before vertical
+     * smushing runs), matching the frozen Java behavior exactly.
+     */
+    public fun smushVerticalRule1(s1: String, s2: String): String {
+        return if (s1 == s2) s1 else EMPTY
+    }
+
+    /**
+     * Vertical rule 2: UNDERSCORE SMUSHING (code value 512).
+     * Same as horizontal smushing rule 2.
+     */
+    public fun smushVerticalRule2(s1: String, s2: String): String {
+        val rule = "|/\\[]{}()<>"
+        return when {
+            s1 == "_" && rule.contains(s2) -> s2
+            s2 == "_" && rule.contains(s1) -> s1
+            else -> EMPTY
+        }
+    }
+
+    /**
+     * Vertical rule 3: HIERARCHY SMUSHING (code value 1024).
+     * Same as horizontal smushing rule 3.
+     */
+    public fun smushVerticalRule3(s1: String, s2: String): String {
+        val rule = "| /\\ [] {} () <>"
+        val pos1 = rule.indexOf(s1)
+        val pos2 = rule.indexOf(s2)
+        if (pos1 != -1 && pos2 != -1 && pos1 != pos2 && kotlin.math.abs(pos1 - pos2) != 1) {
+            return rule.substring(kotlin.math.max(pos1, pos2), kotlin.math.max(pos1, pos2) + 1)
+        }
+        return EMPTY
+    }
+
+    /**
+     * Vertical rule 4: HORIZONTAL LINE SMUSHING (code value 2048).
+     * Smushes stacked pairs of `-` and `_`, replacing them with a
+     * single `=` sub-character.  Either order produces `=`.
+     * Note: this rule smushes pairs of DIFFERENT sub-characters;
+     * identical pairs are handled by vertical rule 1.
+     */
+    public fun smushVerticalRule4(s1: String, s2: String): String {
+        return if ((s1 == "-" && s2 == "_") || (s1 == "_" && s2 == "-")) "=" else EMPTY
+    }
+
+    /**
+     * Vertical rule 5: VERTICAL LINE SUPERSMUSHING (code value 4096).
+     * Supersmushes two `|` sub-characters together into a single `|`.
+     * Unlike other rules, this rule allows super-smushing — many
+     * rows of `|` can collapse into one, producing the illusion
+     * that FIGcharacters have slid vertically against each other.
+     */
+    public fun smushVerticalRule5(s1: String, s2: String): String {
+        return if (s1 == "|" && s2 == "|") "|" else EMPTY
+    }
 }

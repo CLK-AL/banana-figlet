@@ -223,4 +223,114 @@ class FigletRendererJvmParityTest {
         assertEquals("X", SmushRules.smushHorizontalRule5(">", "<"))
         assertEquals("X", jMethod.invoke(null, ">", "<") as String)
     }
+
+    // ---- End-to-end: horizontal + vertical smushing parity --------------
+
+    /**
+     * Multi-line fixtures exercising both the horizontal and vertical
+     * smush pipelines together. Drives each (multi-line × hLayout ×
+     * vLayout) combination through commonMain and frozen Java and
+     * asserts byte-exact agreement for the combined output.
+     */
+    @Test
+    fun `end-to-end multi-line parity across horizontal and vertical layouts`() {
+        val kMeta = JavaLegacyAdapter.metaFromJava(javaMeta)
+
+        val multiLineInputs = listOf(
+            listOf("Hi", "Hi"),
+            listOf("A", "B", "C"),
+            listOf("Hello", "world"),
+            listOf("abc", "def"),
+            listOf("", "Hi"),
+            listOf("Hi"),
+        )
+
+        // Exclude SMUSH_R on the horizontal axis to avoid the §17.5
+        // divergence (vertical rules have no such issue). We still
+        // exercise FULL / FITTED / SMUSH_U horizontally + all 5
+        // vertical layouts.
+        val hLayouts = listOf(
+            JavaLayout.FULL to Layout.FULL,
+            JavaLayout.FITTED to Layout.FITTED,
+            JavaLayout.SMUSH_U to Layout.SMUSH_U,
+        )
+        val vLayouts = listOf(
+            null to null,
+            JavaLayout.FULL to Layout.FULL,
+            JavaLayout.FITTED to Layout.FITTED,
+            JavaLayout.SMUSH_U to Layout.SMUSH_U,
+            JavaLayout.SMUSH_R to Layout.SMUSH_R,
+        )
+
+        for ((jH, kH) in hLayouts) {
+            for ((jV, kV) in vLayouts) {
+                val jOpt = applyLayoutJavaFull(javaMeta.option, jH, jV)
+                val kOpt = kotlinOptionWithLayouts(kMeta.option, kH, kV)
+
+                for (lines in multiLineInputs) {
+                    val jRendered = lines.map { renderJava(it, jOpt) }
+                    val kRendered = lines.map {
+                        FigletRenderer.generateLine(it, kMeta.figletMap, kOpt)
+                    }
+                    val jCombined = JavaLegacyAdapter.combineVerticallyViaJava(jRendered, jOpt)
+                    val kCombined = FigletRenderer.combineVertically(kRendered, kOpt)
+                    assertEquals(
+                        jCombined, kCombined,
+                        "E2E parity mismatch lines=$lines hLayout=$jH vLayout=$jV",
+                    )
+                }
+            }
+        }
+    }
+
+    /** Apply both horizontal and vertical layouts via the frozen setLayout. */
+    private fun applyLayoutJavaFull(
+        base: JavaOption,
+        hLayout: JavaLayout?,
+        vLayout: JavaLayout?,
+    ): JavaOption {
+        val method = JavaBananaUtils::class.java.getDeclaredMethod(
+            "setLayout",
+            JavaOption::class.java,
+            JavaLayout::class.java,
+            JavaLayout::class.java,
+        )
+        method.isAccessible = true
+        return method.invoke(null, base, hLayout, vLayout) as JavaOption
+    }
+
+    /** commonMain equivalent: apply both horizontal and vertical layouts. */
+    private fun kotlinOptionWithLayouts(
+        base: Option,
+        hLayout: Layout?,
+        vLayout: Layout?,
+    ): Option {
+        val withH = kotlinOptionWithLayout(base, hLayout)
+        if (vLayout == null || vLayout == Layout.DEFAULT) return withH
+        val oldRule = withH.rule ?: Rule.default()
+        val newRule = when (vLayout) {
+            Layout.FULL -> oldRule.copy(
+                verticalLayout = Layout.FULL,
+                vertical1 = false, vertical2 = false, vertical3 = false,
+                vertical4 = false, vertical5 = false,
+            )
+            Layout.FITTED -> oldRule.copy(
+                verticalLayout = Layout.FITTED,
+                vertical1 = false, vertical2 = false, vertical3 = false,
+                vertical4 = false, vertical5 = false,
+            )
+            Layout.SMUSH_U -> oldRule.copy(
+                verticalLayout = Layout.SMUSH_U,
+                vertical1 = false, vertical2 = false, vertical3 = false,
+                vertical4 = false, vertical5 = false,
+            )
+            Layout.SMUSH_R -> oldRule.copy(
+                verticalLayout = Layout.SMUSH_R,
+                vertical1 = true, vertical2 = true, vertical3 = true,
+                vertical4 = true, vertical5 = true,
+            )
+            Layout.DEFAULT -> oldRule
+        }
+        return withH.copy(rule = newRule)
+    }
 }

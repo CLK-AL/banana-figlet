@@ -116,4 +116,145 @@ class FigletRendererTest {
         assertEquals(meta.option.height, rows.size)
         assertTrue(rows.all { it.isEmpty() }, "all rows should be empty for empty input")
     }
+
+    // -- Vertical smushing (combineVertically) ----------------------------
+
+    /**
+     * Helper: copy [base] overriding `rule.verticalLayout` and the
+     * per-rule toggles. A FULL layout means "no smushing" so vertical
+     * rules are all off.
+     */
+    private fun withVerticalLayout(base: Option, layout: Layout, rulesOn: Boolean = true): Option {
+        val oldRule = base.rule ?: Rule.default()
+        val flag = rulesOn && layout == Layout.SMUSH_R
+        return base.copy(
+            rule = oldRule.copy(
+                verticalLayout = layout,
+                vertical1 = flag, vertical2 = flag, vertical3 = flag,
+                vertical4 = flag, vertical5 = flag,
+            ),
+        )
+    }
+
+    @Test
+    fun `combineVertically - empty input returns empty list`() {
+        val meta = tinyFont()
+        val rows = FigletRenderer.combineVertically(emptyList(), meta.option)
+        assertTrue(rows.isEmpty(), "empty input should produce empty output")
+    }
+
+    @Test
+    fun `combineVertically - single input returns it unchanged`() {
+        val meta = tinyFont()
+        val one = FigletRenderer.generateLine("A", meta.figletMap, meta.option)
+        val rows = FigletRenderer.combineVertically(listOf(one), meta.option)
+        assertEquals(one, rows)
+    }
+
+    @Test
+    fun `combineVertically - FULL layout stacks without smushing`() {
+        val meta = tinyFont()
+        val opt = withVerticalLayout(meta.option, Layout.FULL)
+        val one = FigletRenderer.generateLine("A", meta.figletMap, opt)
+        val rows = FigletRenderer.combineVertically(listOf(one, one), opt)
+        // FULL = no smushing, output height = 2 * single-line height
+        assertEquals(one.size * 2, rows.size)
+    }
+
+    @Test
+    fun `combineVertically - FITTED layout may not compress height`() {
+        val meta = tinyFont()
+        val opt = withVerticalLayout(meta.option, Layout.FITTED)
+        val one = FigletRenderer.generateLine("A", meta.figletMap, opt)
+        val rows = FigletRenderer.combineVertically(listOf(one, one), opt)
+        // FITTED: as soon as both rows have a non-whitespace column,
+        // they stop smushing. For our "x" glyphs every row is full, so
+        // no overlap is possible — height is 2*height.
+        assertEquals(one.size * 2, rows.size)
+    }
+
+    @Test
+    fun `combineVertically - SMUSH_U allows overlap`() {
+        val meta = tinyFont()
+        val opt = withVerticalLayout(meta.option, Layout.SMUSH_U)
+        val one = FigletRenderer.generateLine("A", meta.figletMap, opt)
+        val rows = FigletRenderer.combineVertically(listOf(one, one), opt)
+        // SMUSH_U: "end" result can still collapse one row.
+        assertTrue(rows.size <= one.size * 2)
+    }
+
+    @Test
+    fun `combineVertically - SMUSH_R with all vertical rules active`() {
+        val meta = tinyFont()
+        val opt = withVerticalLayout(meta.option, Layout.SMUSH_R, rulesOn = true)
+        val one = FigletRenderer.generateLine("H", meta.figletMap, opt)
+        val rows = FigletRenderer.combineVertically(listOf(one, one), opt)
+        // Height cannot exceed 2*height.
+        assertTrue(rows.size <= one.size * 2)
+        assertTrue(rows.size >= one.size, "output must be at least one copy tall")
+    }
+
+    @Test
+    fun `combineVertically - multi-char and multi-line composes`() {
+        val meta = tinyFont()
+        val opt = withVerticalLayout(meta.option, Layout.SMUSH_R)
+        val row1 = FigletRenderer.generateLine("Hi", meta.figletMap, opt)
+        val row2 = FigletRenderer.generateLine("i", meta.figletMap, opt)
+        val row3 = FigletRenderer.generateLine("Hi", meta.figletMap, opt)
+        val combined = FigletRenderer.combineVertically(listOf(row1, row2, row3), opt)
+        assertFalse(combined.isEmpty(), "combined output should be non-empty")
+        // Each row in the final output should have equal width (padding)
+        val widths = combined.map { it.length }.toSet()
+        assertEquals(1, widths.size, "all rows must be padded to the same width: $widths")
+    }
+
+    @Test
+    fun `combineVertically - different widths pad to max`() {
+        val meta = tinyFont()
+        val opt = withVerticalLayout(meta.option, Layout.FULL)
+        val wide = FigletRenderer.generateLine("Hi", meta.figletMap, opt)
+        val narrow = FigletRenderer.generateLine("i", meta.figletMap, opt)
+        val combined = FigletRenderer.combineVertically(listOf(wide, narrow), opt)
+        val widths = combined.map { it.length }.toSet()
+        assertEquals(1, widths.size, "mixed-width inputs must be padded to a single width")
+        assertEquals(wide[0].length, widths.first())
+    }
+
+    // -- C4 regression: empty figlet line array guard ---------------------
+
+    @Test
+    fun `C4 - combineVertically handles empty first entry (smushVerticalFigletLines guard)`() {
+        val meta = tinyFont()
+        val opt = withVerticalLayout(meta.option, Layout.SMUSH_R)
+        val one = FigletRenderer.generateLine("H", meta.figletMap, opt)
+        // Directly pokes the C4 guard via the combineVertically driver.
+        val combined = FigletRenderer.combineVertically(listOf(emptyList(), one), opt)
+        assertEquals(one, combined, "empty first entry must fall through to the second one")
+    }
+
+    @Test
+    fun `C4 - combineVertically handles empty second entry`() {
+        val meta = tinyFont()
+        val opt = withVerticalLayout(meta.option, Layout.SMUSH_R)
+        val one = FigletRenderer.generateLine("H", meta.figletMap, opt)
+        val combined = FigletRenderer.combineVertically(listOf(one, emptyList()), opt)
+        assertEquals(one, combined, "empty second entry must fall through to the first one")
+    }
+
+    // -- C5 regression: mismatched heights cap curDist --------------------
+
+    @Test
+    fun `C5 - combineVertically with mismatched heights caps overlap at shorter`() {
+        val meta = tinyFont()
+        val opt = withVerticalLayout(meta.option, Layout.SMUSH_R)
+        // Build two arrays with different heights by hand. Both are
+        // single-column whitespace → they SMUSH_R-collapse as long as
+        // we don't slice past the shorter array.
+        val short = listOf(" ")
+        val tall = listOf(" ", " ", " ")
+        val combined = FigletRenderer.combineVertically(listOf(short, tall), opt)
+        // C5 guarantees we don't AIOOBE here; result's total rows must
+        // be between max(short,tall)=3 and short+tall=4.
+        assertTrue(combined.size in 3..4, "C5 cap: rows=${combined.size}, want 3..4")
+    }
 }

@@ -196,4 +196,114 @@ class SmushRulesTest {
     fun `universal - general case returns s2`() {
         assertEquals("b", SmushRules.smushUniversal("a", "b", hb))
     }
+
+    // -- Vertical Rule 1: EQUAL CHARACTER SMUSHING -------------------------
+
+    @Test
+    fun `vRule1 - equal chars smush to that char`() {
+        assertEquals("|", SmushRules.smushVerticalRule1("|", "|"))
+        assertEquals("a", SmushRules.smushVerticalRule1("a", "a"))
+        assertEquals("_", SmushRules.smushVerticalRule1("_", "_"))
+    }
+
+    @Test
+    fun `vRule1 - different chars return empty`() {
+        assertEquals("", SmushRules.smushVerticalRule1("|", "/"))
+        assertEquals("", SmushRules.smushVerticalRule1("a", "b"))
+    }
+
+    @Test
+    fun `vRule1 - unlike horizontal rule1, no hardblank guard`() {
+        // Vertical rule 1 does NOT special-case hardblanks — by the
+        // time vertical smushing runs, hardblanks have been replaced
+        // with spaces. Even a literal `$` pair smushes to `$`.
+        assertEquals("\$", SmushRules.smushVerticalRule1("\$", "\$"))
+    }
+
+    // -- Vertical Rule 2: UNDERSCORE SMUSHING ------------------------------
+
+    @Test
+    fun `vRule2 - underscore replaced by every rule char`() {
+        for (c in "|/\\[]{}()<>") {
+            val s = c.toString()
+            assertEquals(s, SmushRules.smushVerticalRule2("_", s), "s1=_ s2=$s")
+            assertEquals(s, SmushRules.smushVerticalRule2(s, "_"), "s1=$s s2=_")
+        }
+    }
+
+    @Test
+    fun `vRule2 - non-matching chars return empty`() {
+        assertEquals("", SmushRules.smushVerticalRule2("_", "a"))
+        assertEquals("", SmushRules.smushVerticalRule2("a", "_"))
+        assertEquals("", SmushRules.smushVerticalRule2("a", "b"))
+    }
+
+    // -- Vertical Rule 3: HIERARCHY SMUSHING -------------------------------
+
+    @Test
+    fun `vRule3 - later class wins`() {
+        assertEquals("/", SmushRules.smushVerticalRule3("|", "/"))
+        assertEquals("[", SmushRules.smushVerticalRule3("|", "["))
+        assertEquals("{", SmushRules.smushVerticalRule3("[", "{"))
+        assertEquals("(", SmushRules.smushVerticalRule3("{", "("))
+        assertEquals("<", SmushRules.smushVerticalRule3("(", "<"))
+    }
+
+    @Test
+    fun `vRule3 - same class returns empty`() {
+        assertEquals("", SmushRules.smushVerticalRule3("/", "\\"))
+        assertEquals("", SmushRules.smushVerticalRule3("[", "]"))
+        assertEquals("", SmushRules.smushVerticalRule3("(", ")"))
+    }
+
+    @Test
+    fun `vRule3 - identical chars return empty`() {
+        assertEquals("", SmushRules.smushVerticalRule3("|", "|"))
+        assertEquals("", SmushRules.smushVerticalRule3("<", "<"))
+    }
+
+    @Test
+    fun `vRule3 - char not in rule returns empty`() {
+        assertEquals("", SmushRules.smushVerticalRule3("a", "|"))
+        assertEquals("", SmushRules.smushVerticalRule3("|", "a"))
+    }
+
+    // -- Vertical Rule 4: HORIZONTAL LINE SMUSHING -------------------------
+
+    @Test
+    fun `vRule4 - dash over underscore smushes to equals`() {
+        assertEquals("=", SmushRules.smushVerticalRule4("-", "_"))
+    }
+
+    @Test
+    fun `vRule4 - underscore over dash smushes to equals`() {
+        assertEquals("=", SmushRules.smushVerticalRule4("_", "-"))
+    }
+
+    @Test
+    fun `vRule4 - identical pairs return empty (handled by rule 1)`() {
+        assertEquals("", SmushRules.smushVerticalRule4("-", "-"))
+        assertEquals("", SmushRules.smushVerticalRule4("_", "_"))
+    }
+
+    @Test
+    fun `vRule4 - unrelated pairs return empty`() {
+        assertEquals("", SmushRules.smushVerticalRule4("-", "|"))
+        assertEquals("", SmushRules.smushVerticalRule4("a", "b"))
+    }
+
+    // -- Vertical Rule 5: VERTICAL LINE SUPERSMUSHING ----------------------
+
+    @Test
+    fun `vRule5 - pipe over pipe smushes to pipe (super-smush)`() {
+        assertEquals("|", SmushRules.smushVerticalRule5("|", "|"))
+    }
+
+    @Test
+    fun `vRule5 - any non-pipe pair returns empty`() {
+        assertEquals("", SmushRules.smushVerticalRule5("|", "/"))
+        assertEquals("", SmushRules.smushVerticalRule5("/", "|"))
+        assertEquals("", SmushRules.smushVerticalRule5("a", "a"))
+        assertEquals("", SmushRules.smushVerticalRule5("_", "_"))
+    }
 }
