@@ -52,10 +52,10 @@ integration into the `fonts-bitsnpicas`-hosted font studio.
 | S1 | **Red-then-green Critical fixes** (✅ complete) | 5 Kotlin red-tests + 5 Java fixes (C1…C5). `mvn test` and `./gradlew test` both green (13 Java + 5 Kotlin = 18/18). | — |
 | S2 | **Phase B coverage drive** (**next**) | JaCoCo 100 % line + branch on `io.leego.banana.**` (the whole library — no Option-C exclusions needed here). Remaining Majors / Minors from `CODE_REVIEW.md` closed. | Text-output parity suite lands: Kotlin tests under `src/test/kotlin/io/leego/banana/parity/**` pin today's Java `bananaify` and `bananansi` output against every bundled `.flf` / `.tlf`. |
 | S3 | **Freeze** — tag `legacy-v1` | CODEOWNERS read-only on `src/main/java/**`; CI diff-check guard. | Parity hashes frozen. |
-| S4 | **Phase D** — port to `commonMain` | Per-subsystem Kotlin port (HeaderParse → GlyphParse → HorizSmush → VertSmush → TlfLoad → OptionImmutability). Same Kotlin tests run against both frozen Java and new Kotlin. Kover 100 % + Pitest ≥ 85 % per module. | Parity suite runs twice per PR (Java + Kotlin); any divergence fails CI. |
+| S4 | **Phase D** (✅ library structurally complete) — port to `commonMain` | Per-subsystem Kotlin port (HeaderParse → GlyphParse → HorizSmush → VertSmush → TlfLoad → OptionImmutability). Same Kotlin tests run against both frozen Java and new Kotlin. Kover 100 % + Pitest ≥ 85 % per module. | Parity suite runs twice per PR (Java + Kotlin); any divergence fails CI. |
 | S5 | **Phase E** — Compose Desktop preview host | `ui-compose-desktop` hosts `FigletPreview` + live text field + font dropdown. `ComposeDesktopUiDriver` `actual` lands. | Green renderer joins the parity matrix. |
 | S6 | **Phase E.2** — Compose for Web (wasmJs) | `ui-compose-html` host reusing `FigletPreview`. `ComposeWebUiDriver` `actual` lands. | Three renderers (text / Desktop / Web); same suite; ARGB / text-output parity both gated. |
-| S7 | **Phase F** — Dual CI/CD release | `profile=java` → ProGuarded `banana-figlet-legacy` JAR. `profile=kmp` → klibs (JVM/JS/wasmJs/Native), Compose Desktop bundle, Web static site, GraalVM `native-image` CLI. `verifyProguardedJar` gates both. | — |
+| S7 | **Phase F** (✅ CI workflows + ProGuard stubs) — Dual CI/CD release | `profile=java` → ProGuarded `banana-figlet-legacy` JAR. `profile=kmp` → klibs (JVM/JS/wasmJs/Native), Compose Desktop bundle, Web static site, GraalVM `native-image` CLI. `verifyProguardedJar` gates both. | — |
 
 See [`../fonts-bitsnpicas/docs/diagrams/08-ui-driver-expect-actual.puml`](../fonts-bitsnpicas/docs/diagrams/08-ui-driver-expect-actual.puml)
 for the UI-test driver architecture (host-wide; banana-figlet
@@ -118,6 +118,18 @@ against the frozen Java:
 - Kover gate tightening to strict 100 % on `commonMain`.
 
 **Next milestone**: Stage S5 (Compose Desktop `UiDriver` actual).
+
+### S7 progress: **dual CI workflows + ProGuard stubs landed** ✅
+
+| File | Purpose |
+| --- | --- |
+| `.github/workflows/java.yml` | Legacy: SDKMAN → `./gradlew test jacocoTestReport jacocoTestCoverageVerification` on 3 OSes |
+| `.github/workflows/kmp.yml` | KMP: SDKMAN → `./gradlew :modules:core:check` on 3 OSes |
+| `proguard/proguard-rules-common.pro` | Kotlin metadata, kotlinx, annotations |
+| `proguard/proguard-rules-java.pro` | Public API keeps: `BananaUtils`, `Font`, `Ansi`, `Option`, `Layout` |
+| `proguard/proguard-rules-kmp.pro` | `io.leego.banana.core.**` |
+
+Commit: `6c710bb`.
 
 ---
 
