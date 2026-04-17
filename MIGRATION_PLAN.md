@@ -77,15 +77,15 @@ imports in commonMain. `./gradlew :modules:core:check` and
 | R2 | `7ab53dd` | `Option` + `Rule` — **fixes M10** (mutable cached state) | Immutable `data class Option` + `Rule` + `copy()` | 50 | 8 field-exact |
 | R3 | `f115d7f` | `Meta` + `BananaUtils.buildMeta` | `Meta` data class, `FlfParser.parseFlfFont(List<String>)`, pure-string `.flf` header + glyph parser | 77 | 9 byte-exact (full Meta equality on Standard font) |
 | R4 | `ab901b0` | `BananaUtils.generateFigletLine` + horizontal smush rules | `FigletRenderer.generateLine`, `SmushRules` with H1-H6, `smushUniversal`, `getHorizontalSmushLength`. **§17.5 `\\/ → Y` dead-branch fixed in commonMain** (explicit pair matching instead of `indexOf`) | 115 | 35 byte-exact + 3 pinned §17.5 divergences |
-| R5 | *(in flight)* | Vertical smushing — completes the render engine | `smushVerticalFigletLines`, `smushVerticalLines`, `canSmushVertical`, `getVerticalSmushDist`, vertical rules V1-V5 | pending | pending |
+| R5 | `a76c437` | Vertical smushing — **completes the render engine** | `FigletRenderer.combineVertically` + `smushVerticalLines` + `canSmushVertical` + `getVerticalSmushDist` + `SmushRules.vRule1..5`. **C4** (empty-array guard) + **C5** (`curDist` cap at `min(figlet1.size, figlet2.size)`) carried natively. No vertical-rule divergences found — rules 1/2/4/5 are trivial pair tests; rule 3 reuses the horizontal-rule-3 hierarchy logic which is already correct (no §17.5-style dead code in vertical). | 146 | full (multi-line × 5 vertical × 3 horizontal) byte-exact |
 
 Fixes carried natively by the Kotlin ports:
 
 - **C1** — FLF header short-token guard (`FlfParser`).
 - **C2** — truncated-glyph parse error (`FlfParser`).
 - **C3** — endmark-only row handled (`FlfParser`).
-- **C4** — empty-figlet vertical-smush guard (will land in R5).
-- **C5** — `getVerticalSmushDist` OOB cap (will land in R5).
+- **C4** — `FigletRenderer.combineVertically` empty-array guard.
+- **C5** — `getVerticalSmushDist` cap at `min(figlet1.size, figlet2.size)`.
 - **M10** — `Option` is immutable (`data class`, no setters).
 - **§8.5** — already fixed in frozen Java pre-freeze.
 - **§17.5** — `smushHorizontalRule5 \\/ → Y` dead branch fixed in
