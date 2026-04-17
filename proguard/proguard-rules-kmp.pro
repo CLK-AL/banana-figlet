@@ -1,0 +1,2 @@
+-keep class io.leego.banana.core.** { *; }
+-keep class org.jetbrains.skiko.** { *; }
