@@ -93,6 +93,32 @@ Fixes carried natively by the Kotlin ports:
   commonMain (Kotlin uses explicit pair matching, Java still has
   the `indexOf` bug per the legacy-v1 contract).
 
+### S4 completion status: **LOGIC PORT STRUCTURALLY COMPLETE** ✅
+
+After R6 (`45f023a`), every public API surface of the library is
+ported to `commonMain` pure Kotlin with differential-parity gates
+against the frozen Java:
+
+- **Parser**: `FlfParser.parseFlfFont(List<String>)` — full `.flf`
+  header + glyph row parsing.
+- **Renderer**: `FigletRenderer.generateLine` (horizontal smush) +
+  `combineVertically` (vertical smush) — all 11 smush rules ported.
+- **Public API**: `BananaFiglet.bananaify` / `bananansi` with font
+  resource loading (`expect/actual FontResourceLoader`).
+- **Model**: `Layout`, `Option` (immutable), `Rule` (immutable),
+  `Meta`, `Ansi`.
+
+**Remaining S4 follow-ups** (not blocking S5):
+
+- TLF (Toilet font) zip-stream path — `Font.convertIfZipped`.
+  The `entry == null` branch is unreachable from the current API
+  path (documented in CODE_REVIEW.md §8 + FontCoverageTest).
+- JS / wasmJs / Native target enablement — currently JVM-only;
+  `expect fun loadFontResource` needs actuals per target.
+- Kover gate tightening to strict 100 % on `commonMain`.
+
+**Next milestone**: Stage S5 (Compose Desktop `UiDriver` actual).
+
 ---
 
 ## 1. Toolchain — SDKMAN + Gradle version catalog
